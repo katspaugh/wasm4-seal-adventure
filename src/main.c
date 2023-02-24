@@ -1,6 +1,4 @@
 #include "wasm4.h"
-#include <stdio.h>
-#include <time.h>
 #include <stdlib.h>
 
 // The Game of Life
@@ -13,7 +11,6 @@
 //
 // The rendering should wrap to the other side of the screen
 
-// The game is represented by a 160x160 grid of cells
 #define WIDTH 160
 #define HEIGHT 160
 
@@ -23,15 +20,15 @@
 uint8_t cells[WIDTH * HEIGHT / 8];
 uint8_t copy[WIDTH * HEIGHT / 8];
 
-time_t start_time = 0;
-time_t paused = 1;
+uint8_t frames = 0;
+uint8_t paused = 1;
 
 void init () {
-  // Create entropy from the current time minus the start time
-  time_t seed = time(NULL) - start_time;
-  srand((unsigned int)seed);
+  srand(frames);
 
+  // Populate the cells with values from the seed
   for (int i = 0; i < WIDTH * HEIGHT / 8; i++) {
+    // Convert rand to a cell state
     cells[i] = rand() & 0xFF;
   }
 }
@@ -80,16 +77,14 @@ void start () {
   PALETTE[1] = 0xffe528;
   PALETTE[2] = 0xffc71b;
   PALETTE[3] = 0x1e0900;
-
-  // Set the start time
-  start_time = time(NULL);
 }
 
 void update () {
   uint8_t gamepad = *GAMEPAD1;
   if (gamepad & BUTTON_1) {
-    init();
     paused = 0;
+    frames++;
+    init();
   }
 
   // Set the color to black
@@ -97,7 +92,8 @@ void update () {
 
   // If paused, show the start screen
   if (paused) {
-    text("Press X to start", 4, 64);
+    frames++;
+    text("Press X to start", 16, 70);
     return;
   }
 
