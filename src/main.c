@@ -18,10 +18,40 @@
 // Each bit represents a cell
 // 0 = dead, 1 = alive
 uint8_t cells[WIDTH * HEIGHT / 8];
-uint8_t copy[WIDTH * HEIGHT / 8];
 
 uint8_t frames = 0;
 uint8_t paused = 1;
+
+void write_pixel (int x, int y) {
+  // The byte index into the framebuffer that contains (x, y)
+  int idx = (y*160 + x) >> 2;
+
+  // Calculate the bits within the byte that corresponds to our position
+  int shift = (x & 0b11) << 1;
+  int mask = 0b11 << shift;
+
+  // Use the first DRAW_COLOR as the pixel color
+  int palette_color = *DRAW_COLORS & 0b1111;
+  int color = (palette_color - 1) & 0b11;
+
+  // Write to the framebuffer
+  FRAMEBUFFER[idx] = (uint8_t)(color << shift) | (FRAMEBUFFER[idx] & ~mask);
+}
+
+int read_pixel (int x, int y) {
+  // The byte index into the framebuffer that contains (x, y)
+  int idx = (y*160 + x) >> 2;
+
+  // Calculate the bits within the byte that corresponds to our position
+  int shift = (x & 0b11) << 1;
+  int mask = 0b11 << shift;
+
+  // Read the pixel color
+  int color = (FRAMEBUFFER[idx] & mask) >> shift;
+
+  // Return the color
+  return color;
+}
 
 void init () {
   srand(frames);
@@ -35,38 +65,62 @@ void init () {
 
 // Compute the next generation of the game
 void next_gen () {
-  // Create a copy of the current state
-  for (int i = 0; i < WIDTH * HEIGHT / 8; i++) {
-    copy[i] = cells[i];
-  }
+  // Use read_pixel to read the current state of the cell
+  // Write the next state into the cells array
 
-  // Iterate over each cell
+  // Iterate over the cells
   for (int y = 0; y < HEIGHT; y++) {
     for (int x = 0; x < WIDTH; x++) {
-      // Count the number of live neighbours
-      int neighbours = 0;
+      // Count the number of live neighbors
+      int neighbors = 0;
+
+      // Iterate over the neighbors
       for (int dy = -1; dy <= 1; dy++) {
         for (int dx = -1; dx <= 1; dx++) {
-          // Wrap the edges of the grid
+          // Skip the current cell
+          if (dx == 0 && dy == 0) continue;
+
+          // Wrap the coordinates
           int nx = (x + dx + WIDTH) % WIDTH;
           int ny = (y + dy + HEIGHT) % HEIGHT;
 
-          // Count the number of live neighbours
-          neighbours += (copy[ny * WIDTH / 8 + nx / 8] >> (nx % 8)) & 1;
+          // Read the pixel
+          int color = read_pixel(nx, ny);
+
+          // Count the live neighbors
+          neighbors += color >= 1;
         }
       }
 
-      // Subtract the current cell
-      neighbours -= (copy[y * WIDTH / 8 + x / 8] >> (x % 8)) & 1;
+      // Compute the next state
+      int next_state = 0;
+      int current_state = read_pixel(x, y) > 0;
 
-      // Apply the rules of the game
-      if (neighbours < 2 || neighbours > 3) {
-        // Rule 1 and 3
-        cells[y * WIDTH / 8 + x / 8] &= ~(1 << (x % 8));
-      } else if (neighbours == 3) {
-        // Rule 4
-        cells[y * WIDTH / 8 + x / 8] |= 1 << (x % 8);
+      // Rule 1
+      if (current_state && neighbors < 2) {
+        next_state = 0;
       }
+
+      // Rule 2
+      if (current_state && (neighbors == 2 || neighbors == 3)) {
+        next_state = 1;
+      }
+
+      // Rule 3
+      if (current_state && neighbors > 3) {
+        next_state = 0;
+      }
+
+      // Rule 4
+      if (!current_state && neighbors == 3) {
+        next_state = 1;
+      }
+
+      // Write the next state into the cells array
+      int idx = (y*WIDTH + x) >> 3;
+      int shift = (x & 0b111);
+      int mask = 0b1 << shift;
+      cells[idx] = (uint8_t)(next_state << shift) | (cells[idx] & ~mask);
     }
   }
 }
@@ -97,15 +151,15 @@ void update () {
     return;
   }
 
-  next_gen();
-
   // Render the cells
-  // void rect (int32_t x, int32_t y, uint32_t width, uint32_t height);
   for (int y = 0; y < HEIGHT; y++) {
     for (int x = 0; x < WIDTH; x++) {
       if ((cells[y * WIDTH / 8 + x / 8] >> (x % 8)) & 1) {
-        rect(x, y, 1, 1);
+        write_pixel(x, y);
       }
     }
   }
+
+  // Compute the next generation
+  next_gen();
 }
