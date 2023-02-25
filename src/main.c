@@ -1,41 +1,134 @@
+// A procedurally generated sea exploration game.
+// The player is a seal.
+// The sea map is generated procedurally. The map scrolls from bottom to top indefinitely.
+// The goal is to reach a prize at the end of the map.
+
 #include "wasm4.h"
-#include <stdlib.h>
 
-// The Game of Life
+#define WIDTH 40
+#define HEIGHT 40
 
-// Rules:
-// 1. Any live cell with fewer than two live neighbours dies, as if caused by underpopulation.
-// 2. Any live cell with two or three live neighbours lives on to the next generation.
-// 3. Any live cell with more than three live neighbours dies, as if by overpopulation.
-// 4. Any dead cell with exactly three live neighbours becomes a live cell, as if by reproduction.
-//
-// The rendering should wrap to the other side of the screen
+int speed = 2; // frames per move
 
-#define WIDTH 160
-#define HEIGHT 160
+int paused = 1;
+int gameover = 0;
+int frames = 0;
 
-// The game state is stored in a 160x160 array of bits
-// Each bit represents a cell
-// 0 = dead, 1 = alive
-uint8_t cells[WIDTH * HEIGHT / 8];
+// Define the map
+unsigned short map[WIDTH][HEIGHT];
+unsigned short map2[WIDTH][HEIGHT];
 
-uint8_t frames = 0;
-uint8_t paused = 1;
+// Map scrolling position
+int scroll = 0;
 
-void write_pixel (int x, int y) {
-  // The byte index into the framebuffer that contains (x, y)
-  int idx = (y*160 + x) >> 2;
+// Define the position of the player
+int playerX = 0;
+int playerY = 0;
+int echolot = 0;
 
-  // Calculate the bits within the byte that corresponds to our position
-  int shift = (x & 0b11) << 1;
-  int mask = 0b11 << shift;
+void start () {
+  // Setup the colors
+  PALETTE[0] = 0x73aac1; // water
+  PALETTE[1] = 0x5c6c6e; // rocks
+  PALETTE[2] = 0xd5d8ce; // ice
+  PALETTE[3] = 0x413e44; // seal
+}
 
-  // Use the first DRAW_COLOR as the pixel color
-  int palette_color = *DRAW_COLORS & 0b1111;
-  int color = (palette_color - 1) & 0b11;
+const uint8_t seal[] = {
+  0b1001,
+  0b1001,
+  0b1111,
+  0b1111,
+  0b0110,
+};
 
-  // Write to the framebuffer
-  FRAMEBUFFER[idx] = (uint8_t)(color << shift) | (FRAMEBUFFER[idx] & ~mask);
+// Generate a Perlin noise for a given x and y, use a seed
+float perlinNoise(int x, int y, int seed) {
+  int n = x + y * 57 + seed * 131;
+  n = (n << 13) ^ n;
+  return (float)(1.0 - ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0);
+}
+
+// Pass the map pointer
+void generateMap (unsigned short map[WIDTH][HEIGHT], int seed) {
+  // Generate the map using a cellular automata
+  // Generate the map using Perlin noise
+  for (int i = 0; i < WIDTH; i++) {
+    for (int j = 0; j < HEIGHT; j++) {
+      float noise = perlinNoise(i, j, seed);
+      if (noise > 0.4) {
+        map[i][j] = 2;
+      } else if (noise > 0.3) {
+        map[i][j] = 3;
+      } else {
+        map[i][j] = 1;
+      }
+    }
+  }
+
+  // Run the cellular automata 5 times, prioritizing the water
+  for (int k = 0; k < 5; k++) {
+    for (int i = 0; i < WIDTH; i++) {
+      for (int j = 0; j < HEIGHT; j++) {
+        int count = 0;
+        for (int x = -1; x <= 1; x++) {
+          for (int y = -1; y <= 1; y++) {
+            if (i + x >= 0 && i + x < WIDTH && j + y >= 0 && j + y < HEIGHT) {
+              if (map[i + x][j + y] == 1) {
+                count++;
+              }
+            }
+          }
+        }
+        if (count > 5) {
+          map[i][j] = 1;
+        }
+      }
+    }
+  }
+
+  // Connect the waters with rivers
+  for (int i = 0; i < WIDTH; i++) {
+    for (int j = 0; j < HEIGHT; j++) {
+      if (map[i][j] == 1) {
+        int count = 0;
+        for (int x = -1; x <= 1; x++) {
+          for (int y = -1; y <= 1; y++) {
+            if (i + x >= 0 && i + x < WIDTH && j + y >= 0 && j + y < HEIGHT) {
+              if (map[i + x][j + y] == 1) {
+                count++;
+              }
+            }
+          }
+        }
+        if (count > 4) {
+          map[i][j] = 1;
+        }
+      }
+    }
+  }
+}
+
+void init () {
+  paused = 0;
+  gameover = 0;
+  scroll = 0;
+
+  // Generate the map
+  generateMap(map, frames * 2);
+  generateMap(map2, frames * 2);
+
+  // Make half of the initial map just water
+  for (int i = 0; i < WIDTH; i++) {
+    for (int j = 0; j < HEIGHT / 2; j++) {
+      map[i][j] = 1;
+    }
+  }
+
+
+  // Place the player in the middle of the screen
+  playerX = SCREEN_SIZE / 2;
+  playerY = 10;
 }
 
 int read_pixel (int x, int y) {
@@ -45,121 +138,155 @@ int read_pixel (int x, int y) {
   // Calculate the bits within the byte that corresponds to our position
   int shift = (x & 0b11) << 1;
   int mask = 0b11 << shift;
-
   // Read the pixel color
   int color = (FRAMEBUFFER[idx] & mask) >> shift;
-
-  // Return the color
   return color;
 }
 
-void init () {
-  srand(frames);
-
-  // Populate the cells with values from the seed
-  for (int i = 0; i < WIDTH * HEIGHT / 8; i++) {
-    // Convert rand to a cell state
-    cells[i] = rand() & 0xFF;
-  }
-}
-
-// Compute the next generation of the game
-void next_gen () {
-  // Use read_pixel to read the current state of the cell
-  // Write the next state into the cells array
-
-  // Iterate over the cells
-  for (int y = 0; y < HEIGHT; y++) {
-    for (int x = 0; x < WIDTH; x++) {
-      // Count the number of live neighbors
-      int neighbors = 0;
-
-      // Iterate over the neighbors
-      for (int dy = -1; dy <= 1; dy++) {
-        for (int dx = -1; dx <= 1; dx++) {
-          // Skip the current cell
-          if (dx == 0 && dy == 0) continue;
-
-          // Wrap the coordinates
-          int nx = (x + dx + WIDTH) % WIDTH;
-          int ny = (y + dy + HEIGHT) % HEIGHT;
-
-          // Read the pixel
-          int color = read_pixel(nx, ny);
-
-          // Count the live neighbors
-          neighbors += color >= 1;
-        }
-      }
-
-      // Compute the next state
-      int next_state = 0;
-      int current_state = read_pixel(x, y) > 0;
-
-      // Rule 1
-      if (current_state && neighbors < 2) {
-        next_state = 0;
-      }
-
-      // Rule 2
-      if (current_state && (neighbors == 2 || neighbors == 3)) {
-        next_state = 1;
-      }
-
-      // Rule 3
-      if (current_state && neighbors > 3) {
-        next_state = 0;
-      }
-
-      // Rule 4
-      if (!current_state && neighbors == 3) {
-        next_state = 1;
-      }
-
-      // Write the next state into the cells array
-      int idx = (y*WIDTH + x) >> 3;
-      int shift = (x & 0b111);
-      int mask = 0b1 << shift;
-      cells[idx] = (uint8_t)(next_state << shift) | (cells[idx] & ~mask);
-    }
-  }
-}
-
-void start () {
-  // Setup the colors
-  PALETTE[0] = 0xfff7ab;
-  PALETTE[1] = 0xffe528;
-  PALETTE[2] = 0xffc71b;
-  PALETTE[3] = 0x1e0900;
-}
-
 void update () {
+  frames = (frames + 1) % (HEIGHT * 1000);
+
   uint8_t gamepad = *GAMEPAD1;
   if (gamepad & BUTTON_1) {
-    paused = 0;
-    frames++;
     init();
   }
 
-  // Set the color to black
-  *DRAW_COLORS = 4;
-
-  // If paused, show the start screen
   if (paused) {
-    frames++;
+    *DRAW_COLORS = 3;
     text("Press X to start", 16, 70);
+    *DRAW_COLORS = 4;
+    text("Press X to start", 17, 71);
     return;
   }
 
-  // Render the cells
-  for (int y = 0; y < HEIGHT; y++) {
-    for (int x = 0; x < WIDTH; x++) {
-      if ((cells[y * WIDTH / 8 + x / 8] >> (x % 8)) & 1) {
-        write_pixel(x, y);
+  // Press Z to use the echolot
+  if (gamepad & BUTTON_2) {
+    echolot = 1;
+  }
+
+  if (!gameover && (frames % speed == 0)) {
+    // Scroll the map
+    scroll++;
+
+    // Once the second map is scrolled, generate a new one
+    if (scroll >= HEIGHT * 4) {
+      scroll = 0;
+
+      for (int i = 0; i < WIDTH; i++) {
+        for (int j = 0; j < HEIGHT; j++) {
+          map[i][j] = map2[i][j];
+        }
+      }
+
+      generateMap(map2, frames);
+    }
+
+    // Player movement
+    if (gamepad & BUTTON_LEFT) {
+      playerX--;
+    } else if (gamepad & BUTTON_RIGHT) {
+      playerX++;
+    } else if (gamepad & BUTTON_UP) {
+      playerY -= 2;
+    } else if (gamepad & BUTTON_DOWN) {
+      playerY++;
+    }
+
+    if (playerX < 0) {
+      playerX = 0;
+    } else if (playerX >= SCREEN_SIZE) {
+      playerX = SCREEN_SIZE - 1;
+    }
+    if (playerY < 0) {
+      playerY = 0;
+    } else if (playerY >= SCREEN_SIZE) {
+      playerY = SCREEN_SIZE - 1;
+    }
+  }
+
+  // void rect (int32_t x, int32_t y, uint32_t width, uint32_t height);
+
+  // Draw the map with an offset of scroll
+  // If scroll is less than HEIGHT, draw the first map
+  // If scroll is greater than HEIGHT, draw the second map
+  for (int i = 0; i < SCREEN_SIZE; i++) {
+    for (int j = 0; j < SCREEN_SIZE; j++) {
+      int di = i / 4;
+      int dj = j + scroll;
+      int fdj = dj / 4;
+
+      if (fdj < HEIGHT) {
+        *DRAW_COLORS = map[di][fdj];
+      } else {
+        *DRAW_COLORS = map2[di][fdj % HEIGHT];
+      }
+
+      rect(i, j, 4, 4);
+
+      if (!gameover) {
+        // Collision detection
+        if (
+            (*DRAW_COLORS != 1) &&
+            (i >= playerX) &&
+            (i < (playerX + 4)) &&
+            (j >= playerY) &&
+            (j < (playerY + 4))
+            ) {
+          gameover = 1;
+          frames = 0;
+        }
       }
     }
   }
 
-  // Compute the next generation
-  next_gen();
+  // Draw the player
+  // void blit (const uint8_t* data, int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t flags);
+  if (!gameover || (frames < 30)) {
+    *DRAW_COLORS = gameover && (frames % 2 == 0) ? 3 : 4;
+    blit(seal, playerX, playerY, 4, 4, BLIT_1BPP);
+  }
+
+  // Draw the echolot
+  if (echolot) {
+    *DRAW_COLORS = 4;
+
+    // void hline (int32_t x, int32_t y, uint32_t len);
+    hline(playerX + 1, playerY + 5, 2);
+
+    for (int i = 0; i < 20; i++) {
+      int width = 4 + (i * 2);
+      int y = playerY + 7 + (i * 2);
+      int x1 = playerX - i;
+      int x2 = x1 + width;
+
+      // Find empty space on the line
+      for (int j = 0; j < width; j++) {
+        if (read_pixel(x1, y) > 0) {
+          x1 += 2;
+        }
+        if (read_pixel(x2, y) > 0) {
+          x2 -= 2;
+        }
+      }
+
+      // void line (int32_t x1, int32_t y1, int32_t x2, int32_t y2);
+      line(x1, y, x2, y);
+
+      if (x1 != (playerX - i) || x2 != (playerX - i + width)) {
+        break;
+      }
+    }
+
+    echolot = 0;
+  }
+
+  if (gameover && (frames > 30)) {
+    *DRAW_COLORS = 3;
+    text("Game over!", 41, 59);
+    text("Press X to restart", 9, 79);
+
+    *DRAW_COLORS = 4;
+    text("Game over!", 42, 60);
+    text("Press X to restart", 10, 80);
+  }
 }
