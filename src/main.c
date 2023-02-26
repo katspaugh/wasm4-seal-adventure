@@ -4,6 +4,7 @@
 // The goal is to reach a prize at the end of the map.
 
 #include "wasm4.h"
+#include "heart.h"
 
 #define WIDTH 40
 #define HEIGHT 40
@@ -24,7 +25,8 @@ int scroll = 0;
 // Define the position of the player
 int playerX = 0;
 int playerY = 0;
-int echolot = 0;
+int lives = 3;
+int blink = 0;
 
 void start () {
   // Setup the colors
@@ -113,6 +115,8 @@ void init () {
   paused = 0;
   gameover = 0;
   scroll = 0;
+  lives = 3;
+  blink = 0;
 
   // Generate the map
   generateMap(map, frames * 2);
@@ -157,11 +161,6 @@ void update () {
     *DRAW_COLORS = 4;
     text("Press X to start", 17, 71);
     return;
-  }
-
-  // Press Z to use the echolot
-  if (gamepad & BUTTON_2) {
-    echolot = 1;
   }
 
   if (!gameover && (frames % speed == 0)) {
@@ -223,7 +222,7 @@ void update () {
 
       rect(i, j, 4, 4);
 
-      if (!gameover) {
+      if (!gameover && (blink == 0)) {
         // Collision detection
         if (
             (*DRAW_COLORS != 1) &&
@@ -232,55 +231,30 @@ void update () {
             (j >= playerY) &&
             (j < (playerY + 4))
             ) {
-          gameover = 1;
-          frames = 0;
+          lives--;
+          blink = 50;
+
+          if (lives == 0) {
+            gameover = 1;
+          }
         }
       }
     }
+  }
+
+  // Blinking effect
+  if (blink > 0) {
+    blink--;
   }
 
   // Draw the player
   // void blit (const uint8_t* data, int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t flags);
-  if (!gameover || (frames < 30)) {
-    *DRAW_COLORS = gameover && (frames % 2 == 0) ? 3 : 4;
+  if (!gameover || (blink > 0)) {
+    *DRAW_COLORS = blink && (blink % 2 == 0) ? 3 : 4;
     blit(seal, playerX, playerY, 4, 4, BLIT_1BPP);
   }
 
-  // Draw the echolot
-  if (echolot) {
-    *DRAW_COLORS = 4;
-
-    // void hline (int32_t x, int32_t y, uint32_t len);
-    hline(playerX + 1, playerY + 5, 2);
-
-    for (int i = 0; i < 20; i++) {
-      int width = 4 + (i * 2);
-      int y = playerY + 7 + (i * 2);
-      int x1 = playerX - i;
-      int x2 = x1 + width;
-
-      // Find empty space on the line
-      for (int j = 0; j < width; j++) {
-        if (read_pixel(x1, y) > 0) {
-          x1 += 2;
-        }
-        if (read_pixel(x2, y) > 0) {
-          x2 -= 2;
-        }
-      }
-
-      // void line (int32_t x1, int32_t y1, int32_t x2, int32_t y2);
-      line(x1, y, x2, y);
-
-      if (x1 != (playerX - i) || x2 != (playerX - i + width)) {
-        break;
-      }
-    }
-
-    echolot = 0;
-  }
-
-  if (gameover && (frames > 30)) {
+  if (gameover && (blink == 0)) {
     *DRAW_COLORS = 3;
     text("Game over!", 41, 59);
     text("Press X to restart", 9, 79);
@@ -288,5 +262,16 @@ void update () {
     *DRAW_COLORS = 4;
     text("Game over!", 42, 60);
     text("Press X to restart", 10, 80);
+  }
+
+  // Draw the lives
+  *DRAW_COLORS = 4;
+  for (int i = 0; i < lives; i++) {
+    blit(heart, 130 + i * 10, 2, heartWidth, heartHeight, heartFlags);
+  }
+
+  if (blink > 0) {
+    *DRAW_COLORS = (blink % 2 == 0) ? 3 : 4;
+    blit(heart, 130 + lives * 10, 2, heartWidth, heartHeight, heartFlags);
   }
 }
